@@ -1,0 +1,443 @@
+---
+title: "PSCI 1202 Final"
+output:
+  pdf_document: default
+  html_document: default
+date: "`r Sys.Date()`"
+---
+
+```{r Packages}
+library(sf)
+library(tidyverse)
+library(curl)
+library(rio)
+library(stringr)
+library(ggrepel)
+```
+
+```{r Cleaning Data}
+# importing data
+tracts <- st_read("Data/tl_2023_34_bg/tl_2023_34_bg.shp")
+data <- import("Data/R13765165_SL150.csv")
+towns <- st_read("Data/Municipal_Boundaries_of_NJ (3)/Municipal_Boundaries_of_NJ.shp")
+pop.density <- import("Data/Pop Density.csv")
+education <- import("Data/Education.csv")
+
+# race cleaning
+data$white.perc <- data$SE_A03001_002 / data$SE_A03001_001
+data$black.perc <- data$SE_A03001_003 / data$SE_A03001_001
+data$asian.perc <- data$SE_A03001_005 / data$SE_A03001_001
+
+race <- data[,c("Geo_FIPS","white.perc", "black.perc", "asian.perc")]
+tracts <- merge(tracts, race, by.x = "GEOID", by.y = "Geo_FIPS")
+
+# income
+data <- rename(data,
+       income = SE_A14006_001)
+
+income <- data[,c("Geo_FIPS","income")]
+tracts <- merge(tracts, income, by.x = "GEOID", by.y = "Geo_FIPS")
+
+# calculating percentages
+education$hs.perc <- (education$SE_A12001_003 / education$SE_A12001_001)
+education$bach.perc <- (education$SE_A12001_005 / education$SE_A12001_001)
+education$masters.perc <- (education$SE_A12001_006 / education$SE_A12001_001)
+education$phd.perc <- (education$SE_A12001_008 / education$SE_A12001_001)
+
+# making a dataset of just education percentages
+education <- education[,c("Geo_FIPS","phd.perc", "hs.perc", "bach.perc", "masters.perc")]
+
+tracts <- merge(tracts, education, by.x = "GEOID", by.y = "Geo_FIPS")
+
+# making dataset of just population density
+pop.density <- rename(pop.density,
+                      pop.density = SE_A00002_002)
+pop.density <- pop.density[,c("Geo_FIPS", "pop.density")]
+
+tracts <- merge(tracts, pop.density, by.x = "GEOID", by.y = "Geo_FIPS")
+```
+
+```{r Background Plots}
+# eliminating the type of municipality so that labels don't overlap as much
+towns$MUN_LABEL <- gsub(" Township", "", towns$MUN_LABEL)
+towns$MUN_LABEL <- gsub(" Borough", "", towns$MUN_LABEL)
+towns$MUN_LABEL <- gsub(" City", "", towns$MUN_LABEL)
+towns$MUN_LABEL <- gsub("City of ", "", towns$MUN_LABEL)
+towns$MUN_LABEL <- gsub(" Village", "", towns$MUN_LABEL)
+
+# Because Bloomfield overlaps with Glen Ridge, I had to play around with this a
+# lot to get the right coordinates (lots of guess and check!)
+bloom <- towns$geometry[towns$MUN_LABEL == "Bloomfield"]
+towns$st_centroid <- NA
+bloom <- data.frame(town = "Bloomfield",
+          x = 730052.3,
+          y = 581798.8)
+
+# setting CRS manually for the point
+bloom <- st_as_sf(bloom,
+         coords = c("y", "x"))
+
+st_crs(bloom) <- st_crs(towns)
+
+# plotting everything but bloomfield first, then bloomfield
+ggplot() +
+  geom_sf(data = towns[towns$MUN_LABEL != "Bloomfield",],
+          color = "gray25",
+          fill = "mistyrose") +
+    geom_sf(data = towns[towns$MUN_LABEL == "Bloomfield",],
+          color = "gray25",
+          fill = "mistyrose") +
+  geom_sf_label(data = towns[towns$MUN_LABEL != "Bloomfield",],
+                aes(label = str_wrap(MUN_LABEL, width = 5)), size = 3) +
+  geom_sf_label(data = bloom,
+                aes(label = town), size = 3) +
+  ggtitle("Essex County, New Jersey",
+          subtitle = "By Municipality") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+```{r}
+ggplot() +
+  geom_sf(data = tracts, aes(fill = hs.perc), color = "white") +
+  scale_fill_gradient(name = "High School Graduate\n",
+                      na.value = "gray", 
+                      low = "white", 
+                      high = "blue",
+                      label = scales::percent_format()) +
+  ggtitle("High School Graduates in Essex County by Census Block Group",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot() +
+  geom_sf(data = tracts, aes(fill = bach.perc), color = "white") +
+  scale_fill_gradient(name = "College-Educated\n",
+                      na.value = "gray", 
+                      low = "white", 
+                      high = "blue",
+                      label = scales::percent_format()) +
+  ggtitle("Bachelors+ in Essex County by Census Block Group",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot() +
+  geom_sf(data = tracts, aes(fill = masters.perc), color = "gray") +
+  scale_fill_gradient(name = "Masters+ Percentage\n",
+                      na.value = "gray", 
+                      low = "white", 
+                      high = "blue",
+                      labels = scales::percent_format()) +
+  ggtitle("Masters+ in Essex County by Census Block Group",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot() +
+  geom_sf(data = tracts, aes(fill = phd.perc), color = "gray") +
+  scale_fill_gradient(name = "PhD Percentage\n",
+                      na.value = "gray", low = "white", high = "blue",
+                      label = scales::percent_format()) +
+  ggtitle("PhDs in Essex County by Census Block Group",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot() +
+  geom_sf(data = tracts[tracts$GEOID != 340130022031,], aes(fill = pop.density), color = "gray") +
+  scale_fill_gradient(name = "Population Density\n",
+                      na.value = "gray", 
+                      low = "white", 
+                      high = "blue",
+                      labels = prettyNum(c(0, 20000, 40000, 60000), 
+                                         big.mark = ",", 
+                                         scientific = F)) +
+  ggtitle("Population Density in Essex County by Census Block Group",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot() +
+  geom_sf(data = tracts, aes(fill = income), color = "white") +
+  scale_fill_gradient(name = "Income\n",
+                      labels = paste0("$", prettyNum(c(0, 50000, 100000, 150000, 200000, 250000),
+                                                     big.mark = ",", scientific = F)),
+                      breaks = (c(0, 50000, 100000, 150000, 200000, 250000)),
+                      na.value = "gray", low = "white", high = "blue") +
+  ggtitle("Median Income in Essex County by Census Block Group",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(tracts) +
+  geom_sf(aes(fill = black.perc), color = "black") +
+  scale_fill_gradient(name = "Black Percentage\n",
+                       low = "white",
+                       high = "blue",
+                       labels = scales::percent_format()) +
+  ggtitle("Black Percentage by Census Block Group",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(tracts) +
+  geom_sf(aes(fill = white.perc), color = "black") +
+  scale_fill_gradient(name = "White Percentage\n",
+                       low = "white",
+                       high = "blue",
+                      labels = scales::percent_format()) +
+  ggtitle("White Percentage by Census Block Group",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r 2020 Map}
+test <- st_read("Data/nj_2020_gen_2020_blocks")
+test <- test[test$COUNTYFP == "013",]
+
+# making a variable for only the census block group (since that's how the census data is aggregated)
+test$block.group <- substring(test$GEOID20, 1, 12)
+
+elect <- test %>%
+  group_by(block.group) %>%
+  dplyr::summarize(biden = sum(G20PREDBID),
+            trump = sum(G20PRERTRU))
+
+elect$total <- elect$biden + elect$trump
+elect$biden.perc <- elect$biden / elect$total
+elect$trump.perc <- elect$trump / elect$total
+
+elect$margin.dem20 <- elect$biden.perc - elect$trump.perc
+
+ggplot(elect) +
+  geom_sf(aes(fill = margin.dem20), color = "black") +
+  scale_fill_gradient2(name = "Democratic Margin\n",
+                       low = "red",
+                       mid = "white",
+                       high = "blue",
+                       midpoint = 0,
+                       limits = c(-0.6, 1),
+                       labels = scales::percent_format(),
+                       breaks = c(-.6, -.4, -.2, 0, .2, .4, .6, .8, 1)) +
+  ggtitle("2020 Presidential Election Data by Census Block Group",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# converting back to dataframes
+# maybe figure out better names when running regression so geometry doesn't
+# go away
+
+elect$geometry <- NULL
+tracts$geometry <- NULL
+bgs <- merge(tracts, elect, by.x = "GEOID", by.y = "block.group")
+```
+
+```{r 2020 Boxplots}
+# making deciles
+bgs$black.decile <- ntile(bgs$black.perc, 10)
+bgs$income.decile <- ntile(bgs$income, 10)
+bgs$white.decile <- ntile(bgs$white.perc, 10)
+
+ggplot(bgs[!is.na(bgs$black.decile),], aes(x = as.factor(black.decile), y = margin.dem20)) +
+  geom_boxplot() +
+  ggtitle("2020 Democratic Margin by Black Decile",
+          subtitle = "By Census Block Group in Essex County, NJ") +
+  xlab("Black Decile") +
+  ylab("2020 Democratic Margin") +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(breaks = seq(-0.6, 1, .1), labels = scales::percent_format()) +
+  coord_flip()
+
+ggplot(bgs[!is.na(bgs$white.decile),], aes(x = as.factor(white.decile), y = margin.dem20)) +
+  geom_boxplot() +
+  ggtitle("2020 Democratic Margin by White Decile",
+          subtitle = "By Census Block Group in Essex County, NJ") +
+  xlab("White Decile") +
+  ylab("2020 Democratic Margin") +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(breaks = seq(-0.6, 1, .1), labels = scales::percent_format()) +
+  coord_flip()
+
+ggplot(bgs[!is.na(bgs$income.decile),], aes(x = as.factor(income.decile), y = margin.dem20)) +
+  geom_boxplot() +
+  ggtitle("2020 Democratic Margin by Income Decile",
+          subtitle = "By Census Block Group in Essex County, NJ") +
+  xlab("Income Decile") +
+  ylab("2020 Democratic Margin") +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(breaks = seq(-0.6, 1, .1), labels = scales::percent_format()) +
+  coord_flip()
+```
+
+
+```{r 2021 Map}
+elect.21 <- st_read("Data/nj_2021_gen_2020_blocks/nj_2021_gen_2020_blocks.shp")
+elect.21 <- elect.21[elect.21$COUNTYFP == "013",]
+
+# making a variable for only the census block group (since that's how the census data is aggregated)
+elect.21$block.group <- substring(elect.21$GEOID20, 1, 12)
+
+# aggregate to block group
+elect.21 <- elect.21 %>%
+  group_by(block.group) %>%
+  dplyr::summarize(murphy = sum(G21GOVDMUR),
+            ciatterelli = sum(G21GOVRCIA))
+
+elect.21$total <- elect.21$murphy + elect.21$ciatterelli
+elect.21$murphy.perc <- elect.21$murphy / elect.21$total
+elect.21$ciatterelli.perc <- elect.21$ciatterelli / elect.21$total
+elect.21$margin.dem21 <- elect.21$murphy.perc - elect.21$ciatterelli.perc
+
+ggplot(elect.21) +
+  geom_sf(aes(fill = margin.dem21), color = "black") +
+  scale_fill_gradient2(name = "Democratic Margin\n",
+                       low = "red",
+                       mid = "white",
+                       high = "blue",
+                       midpoint = 0,
+                       limits = c(-.6, 1),
+                       labels = scales::percent_format(),
+                      breaks = c(-.6, -.4, -.2, 0, .2, .4, .6, .8, 1)) +
+  ggtitle("2021 NJ Gubernatorial Election by Census Block Group",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r 2021 Boxplots}
+
+bgs.21 <- merge(elect.21, tracts, by.x = "block.group", by.y = "GEOID")
+
+# making deciles
+bgs.21$black.decile <- ntile(bgs.21$black.perc, 10)
+bgs.21$income.decile <- ntile(bgs.21$income, 10)
+bgs.21$white.decile <- ntile(bgs.21$white.perc, 10)
+
+# making boxplot
+ggplot(bgs.21[!is.na(bgs.21$black.decile),], aes(x = as.factor(black.decile), y = margin.dem21)) +
+  geom_boxplot() +
+  ggtitle("2021 Democratic Margin by Black Decile",
+          subtitle = "By Census Block Group in Essex County, NJ") +
+  xlab("Black Decile") +
+  ylab("2021 Democratic Margin") +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(breaks = seq(-0.6, 1, .1), labels = scales::percent_format()) +
+  coord_flip()
+
+ggplot(bgs.21[!is.na(bgs.21$white.decile),], aes(x = as.factor(white.decile), y = margin.dem21)) +
+  geom_boxplot() +
+  ggtitle("2021 Democratic Margin by White Decile",
+          subtitle = "By Census Block Group in Essex County, NJ") +
+  xlab("White Decile") +
+  ylab("2021 Democratic Margin") +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(breaks = seq(-0.6, 1, .1), labels = scales::percent_format()) +
+  coord_flip()
+
+ggplot(bgs.21[!is.na(bgs.21$income.decile),], aes(x = as.factor(income.decile), y = margin.dem21)) +
+  geom_boxplot() +
+  ggtitle("2021 Democratic Margin by Income Decile",
+          subtitle = "By Census Block Group in Essex County, NJ") +
+  xlab("Income Decile") +
+  ylab("2021 Democratic Margin") +
+  scale_y_continuous(breaks = seq(-0.6, 1, .1), labels = scales::percent_format()) +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_flip()
+```
+
+```{r Shift Boxplots}
+merged.elect <- merge(elect, elect.21, by = "block.group")
+
+# making merged elect diff
+merged.elect <- st_as_sf(merged.elect)
+
+merged.elect$diff <- merged.elect$murphy.perc - merged.elect$biden.perc
+merged.elect$margin.21 <- merged.elect$ciatterelli.perc - merged.elect$murphy.perc
+merged.elect$margin.20 <- merged.elect$trump.perc - merged.elect$biden.perc
+merged.elect$shift <- merged.elect$margin.21 - merged.elect$margin.20
+head(merged.elect)
+
+# plotting merged elect shifts
+ggplot(merged.elect) +
+  geom_sf(aes(geometry = geometry, fill = shift), color = "black") +
+  scale_fill_gradient2(name = "Republican Shift %",
+                       low = "blue",
+                       mid = "white",
+                       high = "red",
+                       midpoint = 0,
+                       labels = scales::percent_format()) +
+  ggtitle("Republican Shift from 2020 to 2021",
+          subtitle = "Essex County, NJ") +
+  theme_void() +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# finding regressions by different demographics
+bgs.shift <- merge(merged.elect, tracts, by.x = "block.group", by.y = "GEOID")
+```
+
+```{r}
+# making boxplot by Black decile
+bgs.shift$black.decile <- ntile(bgs.shift$black.perc, 10)
+bgs.shift$pop.density <- ntile(bgs.shift$pop.density, 10)
+
+ggplot(bgs.shift[!is.na(bgs.shift$black.decile),], aes(x = as.factor(black.decile), y = shift)) +
+  geom_boxplot() +
+  ggtitle("2020-2021 Republican Shift by Black Decile",
+          subtitle = "By Census Block Group in Essex County, NJ") +
+  xlab("Black Decile") +
+  ylab("2021 Republican Shift") +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(breaks = seq(-0.5, 0.5, .1), labels = scales::percent_format()) +
+  coord_flip()
+
+# making boxplot by white decile
+bgs.shift$white.decile <- ntile(bgs.shift$white.perc, 10)
+
+ggplot(bgs.shift[!is.na(bgs.shift$white.decile),], aes(x = as.factor(white.decile), y = shift)) +
+  geom_boxplot() +
+  scale_y_continuous(breaks = seq(-0.5, 0.5, .1), labels = scales::percent_format()) +
+  ggtitle("2020-2021 Republican Shift by White Decile",
+          subtitle = "By Census Block Group in Essex County, NJ") +
+  xlab("White Decile") +
+  ylab("2021 Republican Shift") +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_flip()
+
+# making boxplot by income decile
+bgs.shift$income.decile <- ntile(bgs.shift$income, 10)
+
+ggplot(bgs.shift[!is.na(bgs.shift$income.decile),], aes(x = as.factor(income.decile), y = shift)) +
+  geom_boxplot() +
+  scale_y_continuous(breaks = seq(-0.5, 0.5, .1), labels = scales::percent_format()) +
+  ggtitle("2020-2021 Republican Shift by Income Decile",
+          subtitle = "By Census Block Group in Essex County, NJ") +
+  xlab("Income Decile") +
+  ylab("2021 Republican Shift") +
+  theme(plot.subtitle = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_flip()
+```
+
